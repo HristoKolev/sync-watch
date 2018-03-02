@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.27130.2036
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SyncWatch", "SyncWatch\SyncWatch.csproj", "{E65941B1-66E8-4694-9694-15D8D8D8BC36}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E65941B1-66E8-4694-9694-15D8D8D8BC36}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E65941B1-66E8-4694-9694-15D8D8D8BC36}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E65941B1-66E8-4694-9694-15D8D8D8BC36}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E65941B1-66E8-4694-9694-15D8D8D8BC36}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {1E1DB4C8-9CF7-4C1A-8031-7D0525E06E13}
+	EndGlobalSection
+EndGlobal
