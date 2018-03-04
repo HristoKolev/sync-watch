@@ -3,9 +3,13 @@
     using System;
     using System.Collections.Generic;
     using System.IO;
+    using System.Reflection;
     using System.Threading;
 
     using CommandLine;
+
+    using log4net;
+    using log4net.Config;
 
     using Newtonsoft.Json;
 
@@ -14,6 +18,12 @@
     public class Program
     {
         private const string SettingsFileName = "sync-settings.json";
+
+        private static ErrorHandler ErrorHandler { get; set; }
+
+        private static ILog Log { get; set; }
+
+        private static string RootDirectory => Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
 
         private static void CreateSyncFile()
         {
@@ -29,13 +39,13 @@
 
             if (File.Exists(SettingsFileName))
             {
-                Console.WriteLine($"`{SettingsFileName}` already exists.");
+                LogDebug($"`{SettingsFileName}` already exists.");
             }
             else
             {
                 File.WriteAllText(SettingsFileName, JsonConvert.SerializeObject(defaultSettings, Formatting.Indented));
 
-                Console.WriteLine($"Example `{SettingsFileName}` created in {Environment.CurrentDirectory}.");
+                LogDebug($"Example `{SettingsFileName}` created in {Environment.CurrentDirectory}.");
             }
 
             Environment.Exit(0);
@@ -45,111 +55,134 @@
         {
             if (e.Error == null)
             {
-                Console.WriteLine("Upload of {0} succeeded", e.FileName);
+                LogDebug($"Upload of {e.FileName} succeeded");
             }
             else
             {
-                Console.WriteLine("Upload of {0} failed: {1}", e.FileName, e.Error);
+                LogDebug($"Upload of {e.FileName} failed: {e.Error}");
             }
 
             if (e.Chmod != null)
             {
                 if (e.Chmod.Error == null)
                 {
-                    Console.WriteLine("Permissions of {0} set to {1}", e.Chmod.FileName, e.Chmod.FilePermissions);
+                    LogDebug($"Permissions of {e.Chmod.FileName} set to {e.Chmod.FilePermissions}");
                 }
                 else
                 {
-                    Console.WriteLine("Setting permissions of {0} failed: {1}", e.Chmod.FileName, e.Chmod.Error);
+                    LogDebug($"Setting permissions of {e.Chmod.FileName} failed: {e.Chmod.Error}");
                 }
             }
             else
             {
-                Console.WriteLine("Permissions of {0} kept with their defaults", e.Destination);
+                LogDebug($"Permissions of {e.Destination} kept with their defaults");
             }
 
             if (e.Touch != null)
             {
                 if (e.Touch.Error == null)
                 {
-                    Console.WriteLine("Timestamp of {0} set to {1}", e.Touch.FileName, e.Touch.LastWriteTime);
+                    LogDebug($"Timestamp of {e.Touch.FileName} set to {e.Touch.LastWriteTime}");
                 }
                 else
                 {
-                    Console.WriteLine("Setting timestamp of {0} failed: {1}", e.Touch.FileName, e.Touch.Error);
+                    LogDebug($"Setting timestamp of {e.Touch.FileName} failed: {e.Touch.Error}");
                 }
             }
             else
             {
                 // This should never happen during "local to remote" synchronization
-                Console.WriteLine("Timestamp of {0} kept with its default (current time)", e.Destination);
+                LogDebug($"Timestamp of {e.Destination} kept with its default (current time)");
             }
 
             if (e.Removal != null)
             {
                 if (e.Removal.Error == null)
                 {
-                    Console.WriteLine("Removed of {0} succeeded.", e.Removal.FileName);
+                    LogDebug($"Removed of {e.Removal.FileName} succeeded.");
                 }
                 else
                 {
-                    Console.WriteLine("Removed of {0} failed: {1}.", e.Removal.FileName, e.Removal.Error);
+                    LogDebug($"Removed of {e.Removal.FileName} failed: {e.Removal.Error}.");
                 }
             }
         }
 
         private static void Main(string[] args)
         {
-            var options = ReadCliOptions(args);
+            // Log4Net
+            var assembly = Assembly.GetEntryAssembly();
+            var logRepository = LogManager.GetRepository(assembly);
+            XmlConfigurator.ConfigureAndWatch(logRepository, new FileInfo(Path.Combine(RootDirectory, "log4net-config.xml")));
 
-            if (options.Create)
+            Log = LogManager.GetLogger(assembly, "Global logger");
+
+            ErrorHandler = new ErrorHandler(Log);
+
+            try
             {
-                CreateSyncFile();
-            }
+                var options = ReadCliOptions(args);
 
-            var settings = ReadSettings();
-            settings.LocalPath = settings.LocalPath ?? Environment.CurrentDirectory;
-
-            var sessionOptions = new SessionOptions
-            {
-                Protocol = Protocol.Sftp,
-                HostName = settings.HostName,
-                UserName = settings.UserName,
-                SshHostKeyFingerprint = string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint) ? null : settings.SshHostKeyFingerprint,
-                GiveUpSecurityAndAcceptAnySshHostKey = string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint),
-            };
-
-            using (var session = new Session())
-            {
-                session.FileTransferred += FileTransferred;
-
-                session.Open(sessionOptions);
-
-                var fsWatcher = new FileSystemWatcher
+                if (options.Create)
                 {
-                    Path = settings.LocalPath,
-                    NotifyFilter =
-                        NotifyFilters.LastAccess | NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
-                    Filter = "*",
-                    IncludeSubdirectories = true
-                };
-
-                void OnChanged(object sender, FileSystemEventArgs e)
-                {
-                    TriggerSync(session, settings);
+                    CreateSyncFile();
                 }
 
-                fsWatcher.Changed += OnChanged;
-                fsWatcher.Created += OnChanged;
-                fsWatcher.Deleted += OnChanged;
-                fsWatcher.Renamed += OnChanged;
+                var settings = ReadSettings();
+                settings.LocalPath = settings.LocalPath ?? Environment.CurrentDirectory;
 
-                fsWatcher.EnableRaisingEvents = true;
+                var sessionOptions = new SessionOptions
+                {
+                    Protocol = Protocol.Sftp,
+                    HostName = settings.HostName,
+                    UserName = settings.UserName,
+                    SshHostKeyFingerprint = string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint) ? null : settings.SshHostKeyFingerprint,
+                    GiveUpSecurityAndAcceptAnySshHostKey = string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint),
+                };
 
-                Console.WriteLine($"Sync watching: {Path.GetFullPath(settings.LocalPath)}");
+                using (var session = new Session())
+                {
+                    session.FileTransferred += FileTransferred;
 
-                Thread.Sleep(-1);
+                    session.Open(sessionOptions);
+
+                    var fsWatcher = new FileSystemWatcher
+                    {
+                        Path = settings.LocalPath,
+                        NotifyFilter =
+                            NotifyFilters.LastAccess | NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                        Filter = "*",
+                        IncludeSubdirectories = true
+                    };
+
+                    void OnChanged(object sender, FileSystemEventArgs e)
+                    {
+                        TriggerSync(session, settings);
+                    }
+
+                    fsWatcher.Changed += OnChanged;
+                    fsWatcher.Created += OnChanged;
+                    fsWatcher.Deleted += OnChanged;
+                    fsWatcher.Renamed += OnChanged;
+
+                    fsWatcher.EnableRaisingEvents = true;
+
+                    LogDebug($"Sync watching: {Path.GetFullPath(settings.LocalPath)}");
+
+                    Thread.Sleep(-1);
+                }
             }
+            catch (Exception e)
+            {
+                ErrorHandler.HandleError(e);
+                throw;
+            }
+        }
+
+        private static void LogDebug(string message)
+        {
+            Log.Debug(message);
+            Console.WriteLine(message);
         }
 
         private static CliOptions ReadCliOptions(string[] args)
@@ -180,8 +213,8 @@
             }
             else
             {
-                Console.WriteLine($"Cannot find `{SettingsFileName}` in `{Environment.CurrentDirectory}`.");
-                Console.WriteLine("Run `sync-watch -c` to create a new one.");
+                LogDebug($"Cannot find `{SettingsFileName}` in `{Environment.CurrentDirectory}`.");
+                LogDebug("Run `sync-watch -c` to create a new one.");
 
                 Environment.Exit(0);
             }
@@ -193,9 +226,9 @@
         {
             try
             {
-                var result = session.SynchronizeDirectories(mode: SynchronizationMode.Remote, localPath: Path.Combine(Environment.CurrentDirectory, settings.LocalPath) ,
-                    remotePath: settings.RemotePath, removeFiles: true, mirror: true, criteria: SynchronizationCriteria.Time,
-                    options: new TransferOptions
+                var result = session.SynchronizeDirectories(mode: SynchronizationMode.Remote,
+                    localPath: Path.Combine(Environment.CurrentDirectory, settings.LocalPath), remotePath: settings.RemotePath,
+                    removeFiles: true, mirror: true, criteria: SynchronizationCriteria.Time, options: new TransferOptions
                     {
                         FilePermissions = new FilePermissions(777),
                         OverwriteMode = OverwriteMode.Overwrite,
@@ -207,7 +240,8 @@
             }
             catch (SessionRemoteException e)
             {
-                Console.WriteLine("Error: {0}", e);
+                ErrorHandler.HandleError(e);
+                LogDebug($"Error: {e}");
             }
         }
     }
@@ -231,5 +265,28 @@
     {
         [Option('c', "create", HelpText = "Create new sync-settings.json file.", Required = false)]
         public bool Create { get; set; }
+    }
+
+    public class ErrorHandler
+    {
+        public ErrorHandler(ILog log)
+        {
+            this.Log = log;
+        }
+
+        private ILog Log { get; }
+
+        public void HandleError(Exception ex)
+        {
+            try
+            {
+                this.Log.Error($"Exception was handled. (ExceptionMessage: {ex.Message}, ExceptionName: {ex.GetType().Name})");
+            }
+            catch (Exception exception)
+            {
+                this.Log.Error("\r\n\r\n" + "Exception occured while handling an exception.\r\n\r\n" + $"Original exception: {ex}\r\n\r\n"
+                               + $"Error handler exception: {exception}");
+            }
+        }
     }
 }
