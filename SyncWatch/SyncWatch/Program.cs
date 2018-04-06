@@ -3,6 +3,7 @@
     using System;
     using System.Collections.Generic;
     using System.IO;
+    using System.Reactive.Linq;
     using System.Reflection;
     using System.Threading;
 
@@ -143,7 +144,6 @@
                 using (var session = new Session())
                 {
                     session.FileTransferred += FileTransferred;
-
                     session.Open(sessionOptions);
 
                     var fsWatcher = new FileSystemWatcher
@@ -155,15 +155,22 @@
                         IncludeSubdirectories = true
                     };
 
-                    void OnChanged(object sender, FileSystemEventArgs e)
+                    TriggerSync(session, settings);
+                     
+                    var source = Observable.Merge(
+                        Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                            action => fsWatcher.Changed += action, action => fsWatcher.Changed -= action),
+                        Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                            action => fsWatcher.Created += action, action => fsWatcher.Created -= action),
+                        Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                            action => fsWatcher.Deleted += action, action => fsWatcher.Deleted -= action),
+                        Observable.FromEventPattern<RenamedEventHandler, FileSystemEventArgs>(
+                            action => fsWatcher.Renamed += action, action => fsWatcher.Renamed -= action));
+
+                    source.Subscribe(pattern =>
                     {
                         TriggerSync(session, settings);
-                    }
-
-                    fsWatcher.Changed += OnChanged;
-                    fsWatcher.Created += OnChanged;
-                    fsWatcher.Deleted += OnChanged;
-                    fsWatcher.Renamed += OnChanged;
+                    });
 
                     fsWatcher.EnableRaisingEvents = true;
 
@@ -179,6 +186,7 @@
             }
         }
 
+     
         private static void LogDebug(string message)
         {
             Log.Debug(message);
@@ -224,24 +232,25 @@
 
         private static void TriggerSync(Session session, SyncSettings settings)
         {
-            try
-            {
-                var result = session.SynchronizeDirectories(mode: SynchronizationMode.Remote,
-                    localPath: Path.Combine(Environment.CurrentDirectory, settings.LocalPath), remotePath: settings.RemotePath,
-                    removeFiles: true, mirror: true, criteria: SynchronizationCriteria.Time, options: new TransferOptions
-                    {
-                        FilePermissions = new FilePermissions(777),
-                        OverwriteMode = OverwriteMode.Overwrite,
-                        TransferMode = TransferMode.Automatic,
-                        FileMask = settings.FileMask,
-                    });
+            var result = session.SynchronizeDirectories(
+                mode: SynchronizationMode.Remote,
+                localPath: Path.Combine(Environment.CurrentDirectory, settings.LocalPath),
+                remotePath: settings.RemotePath,
+                removeFiles: true, 
+                mirror: true, 
+                criteria: SynchronizationCriteria.Time, 
+                options: new TransferOptions
+                {
+                    FilePermissions = new FilePermissions(511), //551 gives all rights. It was 777 before, but as it turns out, this does not use the same encoding as the chmod command.
+                    OverwriteMode = OverwriteMode.Overwrite,
+                    TransferMode = TransferMode.Automatic,
+                    FileMask = settings.FileMask,
+                });
 
-                result.Check();
-            }
-            catch (SessionRemoteException e)
+            foreach (SessionRemoteException failure in result.Failures)
             {
-                ErrorHandler.HandleError(e);
-                LogDebug($"Error: {e}");
+                ErrorHandler.HandleError(failure);
+                LogDebug($"Error: {failure}");
             }
         }
     }
