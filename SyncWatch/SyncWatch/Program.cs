@@ -146,6 +146,8 @@
                     session.FileTransferred += FileTransferred;
                     session.Open(sessionOptions);
 
+                    session.ExecuteCommand($"mkdir -p {settings.RemotePath}");
+
                     var fsWatcher = new FileSystemWatcher
                     {
                         Path = settings.LocalPath,
