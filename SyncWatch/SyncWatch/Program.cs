@@ -20,6 +20,8 @@
     {
         private const string SettingsFileName = "sync-settings.json";
 
+        private const string SshHostKeyFingerprintMessage = "Put your the host key fingerprint here or leave this empty (except any key - unsecure)";
+
         private static ErrorHandler ErrorHandler { get; set; }
 
         private static ILog Log { get; set; }
@@ -28,15 +30,25 @@
 
         private static void CreateSyncFile()
         {
+            Console.Write("server: ");
+            string server = Console.ReadLine();
+
+            Console.Write("username: (default is root): ");
+            string username = Console.ReadLine();
+
+            Console.Write("remote path: ");
+            string remotePath = Console.ReadLine();
+
             var defaultSettings = new SyncSettings
             {
-                HostName = "example.com",
-                UserName = "username",
-                SshHostKeyFingerprint = "Put your the host key fingerprint here or leave this empty (except any key - unsecure)",
+                HostName =string.IsNullOrWhiteSpace(server) ? "example.com" : server,
+                UserName = string.IsNullOrWhiteSpace(username) ? "root" : username,
+                SshHostKeyFingerprint = SshHostKeyFingerprintMessage,
                 LocalPath = "./",
-                FileMask = "*",
-                RemotePath = "/home/example"
+                FileMask = "* | */node_modules/; */.git/; */.idea/; sync-settings.json;",
+                RemotePath = string.IsNullOrWhiteSpace(remotePath) ? "/home/example": remotePath,
             };
+
 
             if (File.Exists(SettingsFileName))
             {
@@ -132,13 +144,25 @@
                 var settings = ReadSettings();
                 settings.LocalPath = settings.LocalPath ?? Environment.CurrentDirectory;
 
+                string sshHostKeyFingerprint;
+
+                if (string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint)
+                    || settings.SshHostKeyFingerprint == SshHostKeyFingerprintMessage)
+                {
+                    sshHostKeyFingerprint = null;
+                }
+                else
+                {
+                    sshHostKeyFingerprint = settings.SshHostKeyFingerprint;
+                }
+
                 var sessionOptions = new SessionOptions
                 {
                     Protocol = Protocol.Sftp,
                     HostName = settings.HostName,
                     UserName = settings.UserName,
-                    SshHostKeyFingerprint = string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint) ? null : settings.SshHostKeyFingerprint,
-                    GiveUpSecurityAndAcceptAnySshHostKey = string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint),
+                    SshHostKeyFingerprint = sshHostKeyFingerprint,
+                    GiveUpSecurityAndAcceptAnySshHostKey = string.IsNullOrWhiteSpace(sshHostKeyFingerprint),
                 };
 
                 using (var session = new Session())
