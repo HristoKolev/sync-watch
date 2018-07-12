@@ -48,8 +48,7 @@
                 FileMask = "* | */node_modules/; */.git/; */.idea/; sync-settings.json;",
                 RemotePath = string.IsNullOrWhiteSpace(remotePath) ? "/home/example": remotePath,
             };
-
-
+            
             if (File.Exists(SettingsFileName))
             {
                 LogDebug($"`{SettingsFileName}` already exists.");
@@ -132,86 +131,89 @@
 
             ErrorHandler = new ErrorHandler(Log);
 
-            try
+            while (true)
             {
-                var options = ReadCliOptions(args);
-
-                if (options.Create)
+                try
                 {
-                    CreateSyncFile();
-                }
+                    var options = ReadCliOptions(args);
 
-                var settings = ReadSettings();
-                settings.LocalPath = settings.LocalPath ?? Environment.CurrentDirectory;
-
-                string sshHostKeyFingerprint;
-
-                if (string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint)
-                    || settings.SshHostKeyFingerprint == SshHostKeyFingerprintMessage)
-                {
-                    sshHostKeyFingerprint = null;
-                }
-                else
-                {
-                    sshHostKeyFingerprint = settings.SshHostKeyFingerprint;
-                }
-
-                var sessionOptions = new SessionOptions
-                {
-                    Protocol = Protocol.Sftp,
-                    HostName = settings.HostName,
-                    UserName = settings.UserName,
-                    SshHostKeyFingerprint = sshHostKeyFingerprint,
-                    GiveUpSecurityAndAcceptAnySshHostKey = string.IsNullOrWhiteSpace(sshHostKeyFingerprint),
-                };
-
-                using (var session = new Session())
-                {
-                    session.FileTransferred += FileTransferred;
-                    session.Open(sessionOptions);
-
-                    session.ExecuteCommand($"mkdir -p {settings.RemotePath}");
-
-                    var fsWatcher = new FileSystemWatcher
+                    if (options.Create)
                     {
-                        Path = settings.LocalPath,
-                        NotifyFilter =
-                            NotifyFilters.LastAccess | NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
-                        Filter = "*",
-                        IncludeSubdirectories = true
+                        CreateSyncFile();
+                    }
+
+                    var settings = ReadSettings();
+                    settings.LocalPath = settings.LocalPath ?? Environment.CurrentDirectory;
+
+                    string sshHostKeyFingerprint;
+
+                    if (string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint)
+                        || settings.SshHostKeyFingerprint == SshHostKeyFingerprintMessage)
+                    {
+                        sshHostKeyFingerprint = null;
+                    }
+                    else
+                    {
+                        sshHostKeyFingerprint = settings.SshHostKeyFingerprint;
+                    }
+
+                    var sessionOptions = new SessionOptions
+                    {
+                        Protocol = Protocol.Sftp,
+                        HostName = settings.HostName,
+                        UserName = settings.UserName,
+                        SshHostKeyFingerprint = sshHostKeyFingerprint,
+                        GiveUpSecurityAndAcceptAnySshHostKey = string.IsNullOrWhiteSpace(sshHostKeyFingerprint),
                     };
 
-                    TriggerSync(session, settings);
-                     
-                    var source = Observable.Merge(
-                        Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
-                            action => fsWatcher.Changed += action, action => fsWatcher.Changed -= action),
-                        Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
-                            action => fsWatcher.Created += action, action => fsWatcher.Created -= action),
-                        Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
-                            action => fsWatcher.Deleted += action, action => fsWatcher.Deleted -= action),
-                        Observable.FromEventPattern<RenamedEventHandler, FileSystemEventArgs>(
-                            action => fsWatcher.Renamed += action, action => fsWatcher.Renamed -= action));
-
-                    source.Subscribe(pattern =>
+                    using (var session = new Session())
                     {
+                        session.FileTransferred += FileTransferred;
+                        session.Open(sessionOptions);
+
+                        session.ExecuteCommand($"mkdir -p {settings.RemotePath}");
+
+                        var fsWatcher = new FileSystemWatcher
+                        {
+                            Path = settings.LocalPath,
+                            NotifyFilter =
+                                NotifyFilters.LastAccess | NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                            Filter = "*",
+                            IncludeSubdirectories = true
+                        };
+
                         TriggerSync(session, settings);
-                    });
 
-                    fsWatcher.EnableRaisingEvents = true;
+                        var source = Observable.Merge(
+                            Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                                action => fsWatcher.Changed += action, action => fsWatcher.Changed -= action),
+                            Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                                action => fsWatcher.Created += action, action => fsWatcher.Created -= action),
+                            Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                                action => fsWatcher.Deleted += action, action => fsWatcher.Deleted -= action),
+                            Observable.FromEventPattern<RenamedEventHandler, FileSystemEventArgs>(
+                                action => fsWatcher.Renamed += action, action => fsWatcher.Renamed -= action));
 
-                    LogDebug($"Sync watching: {Path.GetFullPath(settings.LocalPath)}");
+                        source.Subscribe(pattern =>
+                        {
+                            TriggerSync(session, settings);
+                        });
 
-                    Thread.Sleep(-1);
+                        fsWatcher.EnableRaisingEvents = true;
+
+                        LogDebug($"Sync watching: {Path.GetFullPath(settings.LocalPath)}");
+
+                        Thread.Sleep(-1);
+                    }
                 }
-            }
-            catch (Exception e)
-            {
-                ErrorHandler.HandleError(e);
-                throw;
+                catch (Exception e)
+                {
+                    ErrorHandler.HandleError(e);
+                }
+
+                Thread.Sleep(TimeSpan.FromSeconds(10));
             }
         }
-
      
         private static void LogDebug(string message)
         {
