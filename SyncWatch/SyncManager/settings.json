@@ -1,0 +1,28 @@
+{
+  "Connections": [
+    {
+      "Path": "P:\\projects\\SourceControl\\inject-json",
+      "IsEnabled": true,
+      "RunOnStartup": true,
+      "LogFilePath": "inject-json.txt"
+    },
+    {
+      "Path": "P:\\projects\\SourceControl\\TrackTV",
+      "IsEnabled": true,
+      "RunOnStartup": true,
+      "LogFilePath": "TrackTV.txt"
+    },
+    {
+      "Path": "P:\\projects\\SourceControl\\kcrypt",
+      "IsEnabled": true,
+      "RunOnStartup": true,
+      "LogFilePath": "kcrypt.txt"
+    },
+    {
+      "Path": "P:\\projects\\SourceControl\\safe_repo\\docker-env",
+      "IsEnabled": true,
+      "RunOnStartup": true,
+      "LogFilePath": "docker-env.txt"
+    }
+  ]
+}

@@ -25,6 +25,48 @@
                 Directory.CreateDirectory(logsDirectory);
             }
 
+            var processes = RunProcesses(appSettings, options, logsDirectory);
+
+            while (true)
+            {
+                Console.WriteLine("Enter 'q' to exit or 'r' to reload.");
+                string input = Console.ReadLine() ?? "";
+
+                if (input == "q")
+                {
+                    StopProcesses(processes);
+                    break;
+                }
+
+                if (input == "r")
+                {
+                    StopProcesses(processes);
+                    processes = RunProcesses(appSettings, options, logsDirectory);
+                }
+            }
+        }
+
+        private static void StopProcesses(List<Process> processes)
+        {
+            foreach (var process in processes)
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill();
+                }
+            }
+
+            foreach (var process in Process.GetProcessesByName("sync-watch"))
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill();
+                }
+            }
+        }
+
+        private static List<Process> RunProcesses(AppSettings appSettings, CliOptions options, string logsDirectory)
+        {
             var processes = appSettings.Connections.Where(x => x.IsEnabled && (x.RunOnStartup || !options.Startup))
                                        .Select(connection => new Process
                                        {
@@ -45,27 +87,7 @@
                 process.Start();
             }
 
-            do
-            {
-                Console.WriteLine("Enter 'q' to exit.");
-            }
-            while (Console.ReadLine() != "q");
-
-            foreach (var process in processes)
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill();
-                }
-            }
-
-            foreach (var process in Process.GetProcessesByName("sync-watch"))
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill();
-                }
-            }
+            return processes;
         }
 
         private static CliOptions ReadCliOptions(string[] args)
