@@ -1,20 +1,18 @@
 ﻿namespace SyncWatch
 {
     using System;
-    using System.Collections.Generic;
     using System.IO;
     using System.Reflection;
+    using System.Threading;
+    using System.Threading.Tasks;
 
     using CommandLine;
 
     using Newtonsoft.Json;
 
-    public class Program
+    public static class Program
     {
-        private const string SettingsFileName = "sync-settings.json";
-
-        private const string SshHostKeyFingerprintMessage =
-            "Put your the host key fingerprint here or leave this empty (except any key - unsecure)";
+        private const string SyncSettingsFileName = "sync-settings.json";
 
         private static void CreateSyncFile()
         {
@@ -31,106 +29,135 @@
             {
                 HostName = string.IsNullOrWhiteSpace(server) ? "example.com" : server,
                 UserName = string.IsNullOrWhiteSpace(username) ? "root" : username,
-                SshHostKeyFingerprint = SshHostKeyFingerprintMessage,
+                SshHostKeyFingerprint = Global.SshHostKeyFingerprintMessage,
                 LocalPath = "./",
                 FileMask = "* | */node_modules/; */.git/; */.idea/; sync-settings.json;",
                 RemotePath = string.IsNullOrWhiteSpace(remotePath) ? "/home/example" : remotePath,
             };
 
-            if (File.Exists(SettingsFileName))
-            {
-                MainLogger.Instance.LogDebug($"`{SettingsFileName}` already exists.");
-            }
-            else
-            {
-                File.WriteAllText(SettingsFileName, JsonConvert.SerializeObject(defaultSettings, Formatting.Indented));
+            File.WriteAllText(SyncSettingsFileName, JsonConvert.SerializeObject(defaultSettings, Formatting.Indented));
 
-                MainLogger.Instance.LogDebug($"Example `{SettingsFileName}` created in {Environment.CurrentDirectory}.");
+            MainLogger.Instance.LogDebug($"Example `{SyncSettingsFileName}` created in {Environment.CurrentDirectory}.");
+        }
+
+        private static async Task<int> Main(string[] args)
+        {
+            // Read the app-config.
+            if (!File.Exists(Global.AppConfigLocation))
+            {
+                Console.WriteLine("`app-config.json` is missing...");
+                return 1;
+            }
+
+            Global.AppConfig = JsonConvert.DeserializeObject<AppConfig>(File.ReadAllText(Global.AppConfigLocation));
+
+            // Logging.
+            MainLogger.Initialize(new LoggerConfigModel
+            {
+                Assembly = Assembly.GetEntryAssembly(),
+                LogRootDirectory = Global.AssemblyDirectory,
+                SentryDsn = Global.AppConfig.SentryDsn
+            });
+            
+            try
+            {
+                // Reading the CLI arguments
+                var options = ReadArguments<CliArguments>(args);
+
+                // If we there ware errors during argument parsing.
+                if (options == null)
+                {
+                    return 1;
+                }
+
+                // Create new sync-settings.json file.
+                if (options.Create)
+                {
+                    if (File.Exists(SyncSettingsFileName))
+                    {
+                        MainLogger.Instance.LogDebug($"`{SyncSettingsFileName}` already exists.");
+                        return 1;
+                    }
+
+                    CreateSyncFile();
+
+                    return 0;
+                }
+
+                // REPL for managing many sessions.
+                if (!string.IsNullOrWhiteSpace(options.SyncSetupFile))
+                {
+                    SyncSetupRepl();
+                    return 0;
+                }
+
+                // Single session mode.
+                RunSyncInstance();
+
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                await MainLogger.Instance.LogError(exception);
+                return 1;
             }
         }
 
-        private static void Main(string[] args)
+        private static void RunSyncInstance()
         {
-            MainLogger.Initialize(Assembly.GetEntryAssembly());
+            // The path to the settings file.
+            string path = Path.Combine(Environment.CurrentDirectory, SyncSettingsFileName);
 
+            // Local path relative to the current working directory.
+            var settings = SyncSession.ReadSettings(path, localPath => Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, localPath)));
+
+            using (var session = new SyncSession(settings))
+            {
+                session.Start();
+
+                // Just sleep. The session will never close.
+                Thread.Sleep(-1);
+            }
+        }
+
+        private static void SyncSetupRepl()
+        {
             while (true)
             {
-                var options = ReadCliOptions(args);
+                Console.WriteLine("Enter 'q' to exit or 'r' to reload.");
+                string input = Console.ReadLine() ?? string.Empty;
 
-                if (options.Create)
+                if (input == "q")
                 {
-                    CreateSyncFile();
+                    MainLogger.Instance.LogDebug("Quitting...");
+                    break;
+                }
+
+                if (input == "r")
+                {
+                    MainLogger.Instance.LogDebug("Reloading...");
                 }
             }
         }
 
-        private static CliOptions ReadCliOptions(string[] args)
+        private static T ReadArguments<T>(string[] args)
+            where T : class
         {
-            CliOptions options = null;
+            T cliArgs = null;
 
-            IEnumerable<Error> errors = null;
+            Parser.Default.ParseArguments<T>(args)
+                  .WithParsed(x => cliArgs = x);
 
-            var result = Parser.Default.ParseArguments<CliOptions>(args);
-
-            result.WithParsed(opt => options = opt).WithNotParsed(e => errors = e);
-
-            if (errors != null)
-            {
-                Environment.Exit(0);
-            }
-
-            return options;
-        }
-
-        private static SyncSettings ReadSettings(string path)
-        {
-            SyncSettings settings;
-
-            if (File.Exists(path))
-            {
-                settings = JsonConvert.DeserializeObject<SyncSettings>(File.ReadAllText(path));
-            }
-            else
-            {
-                MainLogger.Instance.LogDebug($"Cannot find file `{path}`.");
-                MainLogger.Instance.LogDebug("Run `sync-watch -c` to create a new one.");
-
-                return null;
-            }
-
-            if (!Path.IsPathRooted(settings.LocalPath))
-            {
-                MainLogger.Instance.LogDebug($"The path is not relative `{path}`.");
-                return null;
-            }
-
-            if (string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint) || settings.SshHostKeyFingerprint == SshHostKeyFingerprintMessage)
-            {
-                settings.SshHostKeyFingerprint = null;
-            }
-
-            return settings;
+            return cliArgs;
         }
     }
 
-    public class SyncSettings
-    {
-        public string FileMask { get; set; }
-
-        public string HostName { get; set; }
-
-        public string LocalPath { get; set; }
-
-        public string RemotePath { get; set; }
-
-        public string SshHostKeyFingerprint { get; set; }
-
-        public string UserName { get; set; }
-    }
-
-    public class CliOptions
+    public class CliArguments
     {
         [Option('c', "create", HelpText = "Create new sync-settings.json file.", Required = false)]
         public bool Create { get; set; }
+
+        [Option('f', "setup-file", HelpText = "Run sync setup file.", Required = false)]
+        public string SyncSetupFile { get; set; }
     }
 }

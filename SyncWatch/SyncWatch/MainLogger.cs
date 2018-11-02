@@ -25,7 +25,7 @@
 
         private static RavenClient RavenClient;
 
-        public static void Initialize(Assembly assembly)
+        public static void Initialize(LoggerConfigModel config)
         {
             if (IsInitialized)
             {
@@ -40,35 +40,43 @@
                 }
 
                 // Configure log4net.
-                var logRepository = LogManager.GetRepository(assembly);
+                var logRepository = LogManager.GetRepository(config.Assembly);
 
-                var configFile = new FileInfo(Path.Combine(Global.DataDirectory, LoggerFilePath));
+                var configFile = new FileInfo(Path.Combine(config.LogRootDirectory, LoggerFilePath));
 
                 XmlConfigurator.ConfigureAndWatch(logRepository, configFile);
 
-                Log4NetLogger = LogManager.GetLogger(assembly, "Global logger");
+                Log4NetLogger = LogManager.GetLogger(config.Assembly, "Global logger");
 
                 // Configure Sentry.
-                RavenClient = new RavenClient(Global.AppConfig.SentryDsn);
+                RavenClient = new RavenClient(config.SentryDsn);
 
                 IsInitialized = true;
             }
-        }
-
-        public Task LogError(Exception exception)
-        {
-            Log4NetLogger.Error(
-                $"Exception was handled. (ExceptionMessage: {exception.Message}, ExceptionName: {exception.GetType().Name})");
-
-            return RavenClient.CaptureAsync(new SentryEvent(exception)
-            {
-                Level = ErrorLevel.Error
-            });
         }
 
         public void LogDebug(string message)
         {
             Log4NetLogger.Debug(message);
         }
+
+        public Task LogError(Exception exception)
+        {
+            Log4NetLogger.Error($"Exception was handled. (ExceptionMessage: {exception.Message}, ExceptionName: {exception.GetType().Name})");
+
+            return RavenClient.CaptureAsync(new SentryEvent(exception)
+            {
+                Level = ErrorLevel.Error
+            });
+        }
+    }
+
+    public class LoggerConfigModel
+    {
+        public Assembly Assembly { get; set; }
+
+        public string LogRootDirectory { get; set; }
+
+        public string SentryDsn { get; set; }
     }
 }

@@ -4,6 +4,9 @@
     using System.IO;
     using System.Reactive;
     using System.Reactive.Linq;
+    using System.Runtime.CompilerServices;
+
+    using Newtonsoft.Json;
 
     using WinSCP;
 
@@ -51,13 +54,22 @@
 
         public void Start()
         {
+            MainLogger.Instance.LogDebug($"Opening a connection to `{this.SyncSettings.HostName}:{this.SyncSettings.RemotePath}` ...");
             this.Session.Open(this.SessionOptions);
+
+            MainLogger.Instance.LogDebug($"Creating the remote path `{this.SyncSettings.RemotePath}` if necessary...");
             this.Session.ExecuteCommand($"mkdir -p {this.SyncSettings.RemotePath}");
 
+            MainLogger.Instance.LogDebug("Initiating first sync...");
             this.SyncFiles();
+            MainLogger.Instance.LogDebug("First sync finished...");
 
-            this.Subscription = this.FsObservable.Subscribe(_ => this.SyncFiles());
+            this.Subscription = this.FsObservable.Subscribe(_ =>
+            {
+                MainLogger.Instance.LogDebug($"Files changed...");
 
+                this.SyncFiles();
+            });
             this.FsWatcher.EnableRaisingEvents = true;
 
             MainLogger.Instance.LogDebug($"Sync watching: {this.SyncSettings.LocalPath}");
@@ -70,7 +82,7 @@
             this.FsWatcher.EnableRaisingEvents = false;
             this.Subscription.Dispose();
 
-            this.Session.FileTransferred -= FileTransferred;
+            this.Session.FileTransferred -= this.FileTransferred;
             this.Session.Close();
 
             this.IsRunning = false;
@@ -92,7 +104,7 @@
                 ReconnectTimeInMilliseconds = 1000
             };
 
-            this.Session.FileTransferred += FileTransferred;
+            this.Session.FileTransferred += this.FileTransferred;
 
             this.FsWatcher = new FileSystemWatcher
             {
@@ -103,61 +115,66 @@
             };
         }
 
-        private static void FileTransferred(object sender, TransferEventArgs e)
+        private void FileTransferred(object sender, TransferEventArgs e)
         {
             if (e.Error == null)
             {
-                MainLogger.Instance.LogDebug($"Upload of {e.FileName} succeeded");
+                this.LogTransfer($"Upload of {e.FileName} succeeded");
             }
             else
             {
-                MainLogger.Instance.LogDebug($"Upload of {e.FileName} failed: {e.Error}");
+                this.LogTransfer($"Upload of {e.FileName} failed: {e.Error}");
             }
 
             if (e.Chmod != null)
             {
                 if (e.Chmod.Error == null)
                 {
-                    MainLogger.Instance.LogDebug($"Permissions of {e.Chmod.FileName} set to {e.Chmod.FilePermissions}");
+                    this.LogTransfer($"Permissions of {e.Chmod.FileName} set to {e.Chmod.FilePermissions}");
                 }
                 else
                 {
-                    MainLogger.Instance.LogDebug($"Setting permissions of {e.Chmod.FileName} failed: {e.Chmod.Error}");
+                    this.LogTransfer($"Setting permissions of {e.Chmod.FileName} failed: {e.Chmod.Error}");
                 }
             }
             else
             {
-                MainLogger.Instance.LogDebug($"Permissions of {e.Destination} kept with their defaults");
+                this.LogTransfer($"Permissions of {e.Destination} kept with their defaults");
             }
 
             if (e.Touch != null)
             {
                 if (e.Touch.Error == null)
                 {
-                    MainLogger.Instance.LogDebug($"Timestamp of {e.Touch.FileName} set to {e.Touch.LastWriteTime}");
+                    this.LogTransfer($"Timestamp of {e.Touch.FileName} set to {e.Touch.LastWriteTime}");
                 }
                 else
                 {
-                    MainLogger.Instance.LogDebug($"Setting timestamp of {e.Touch.FileName} failed: {e.Touch.Error}");
+                    this.LogTransfer($"Setting timestamp of {e.Touch.FileName} failed: {e.Touch.Error}");
                 }
             }
             else
             {
                 // This should never happen during "local to remote" synchronization
-                MainLogger.Instance.LogDebug($"Timestamp of {e.Destination} kept with its default (current time)");
+                this.LogTransfer($"Timestamp of {e.Destination} kept with its default (current time)");
             }
 
             if (e.Removal != null)
             {
                 if (e.Removal.Error == null)
                 {
-                    MainLogger.Instance.LogDebug($"Removed of {e.Removal.FileName} succeeded.");
+                    this.LogTransfer($"Removed of {e.Removal.FileName} succeeded.");
                 }
                 else
                 {
-                    MainLogger.Instance.LogDebug($"Removed of {e.Removal.FileName} failed: {e.Removal.Error}.");
+                    this.LogTransfer($"Removed of {e.Removal.FileName} failed: {e.Removal.Error}.");
                 }
             }
+        }
+
+        private void LogTransfer(string message)
+        {
+            MainLogger.Instance.LogDebug($"{this.SyncSettings.HostName}:{this.SyncSettings.RemotePath} | {message}");
         }
 
         private void SyncFiles()
@@ -183,5 +200,52 @@
                 MainLogger.Instance.LogError(failure);
             }
         }
+
+        public static SyncSettings ReadSettings(string path, Func<string, string> resolveLocalPath)
+        {
+            SyncSettings settings;
+
+            if (File.Exists(path))
+            {
+                settings = JsonConvert.DeserializeObject<SyncSettings>(File.ReadAllText(path));
+            }
+            else
+            {
+                MainLogger.Instance.LogDebug($"Cannot find file `{path}`.");
+                MainLogger.Instance.LogDebug("Run `sync-watch -c` to create a new one.");
+
+                return null;
+            }
+
+            settings.LocalPath = resolveLocalPath(settings.LocalPath);
+
+            if (!Path.IsPathRooted(settings.LocalPath))
+            {
+                MainLogger.Instance.LogDebug($"The path is not relative `{path}`.");
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.SshHostKeyFingerprint) || settings.SshHostKeyFingerprint == Global.SshHostKeyFingerprintMessage)
+            {
+                settings.SshHostKeyFingerprint = null;
+            }
+
+            return settings;
+        }
+    }
+
+    public class SyncSettings
+    {
+        public string FileMask { get; set; }
+
+        public string HostName { get; set; }
+
+        public string LocalPath { get; set; }
+
+        public string RemotePath { get; set; }
+
+        public string SshHostKeyFingerprint { get; set; }
+
+        public string UserName { get; set; }
     }
 }
