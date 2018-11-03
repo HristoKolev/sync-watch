@@ -12,8 +12,6 @@
 
     public static class Program
     {
-        private const string SyncSettingsFileName = "sync-settings.json";
-
         private static void CreateSyncFile()
         {
             Console.Write("server: ");
@@ -35,9 +33,9 @@
                 RemotePath = string.IsNullOrWhiteSpace(remotePath) ? "/home/example" : remotePath,
             };
 
-            File.WriteAllText(SyncSettingsFileName, JsonConvert.SerializeObject(defaultSettings, Formatting.Indented));
+            File.WriteAllText(Global.SyncSettingsFileName, JsonConvert.SerializeObject(defaultSettings, Formatting.Indented));
 
-            MainLogger.Instance.LogDebug($"Example `{SyncSettingsFileName}` created in {Environment.CurrentDirectory}.");
+            MainLogger.Instance.LogDebug($"Example `{Global.SyncSettingsFileName}` created in {Environment.CurrentDirectory}.");
         }
 
         private static async Task<int> Main(string[] args)
@@ -73,9 +71,9 @@
                 // Create new sync-settings.json file.
                 if (options.Create)
                 {
-                    if (File.Exists(SyncSettingsFileName))
+                    if (File.Exists(Global.SyncSettingsFileName))
                     {
-                        MainLogger.Instance.LogDebug($"`{SyncSettingsFileName}` already exists.");
+                        MainLogger.Instance.LogDebug($"`{Global.SyncSettingsFileName}` already exists.");
                         return 1;
                     }
 
@@ -84,11 +82,10 @@
                     return 0;
                 }
 
-                // REPL for managing many sessions.
+                // Managing of many sessions.
                 if (!string.IsNullOrWhiteSpace(options.SyncSetupFile))
                 {
-                    SyncSetupRepl();
-                    return 0;
+                    return SyncManager.Run(options.SyncSetupFile);
                 }
 
                 // Single session mode.
@@ -105,11 +102,23 @@
 
         private static void RunSyncInstance()
         {
+            MainLogger.Instance.LogDebug($"sync-watch started in single instance mode...");
+
             // The path to the settings file.
-            string path = Path.Combine(Environment.CurrentDirectory, SyncSettingsFileName);
+            string path = Path.Combine(Environment.CurrentDirectory, Global.SyncSettingsFileName);
 
             // Local path relative to the current working directory.
-            var settings = SyncSession.ReadSettings(path, localPath => Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, localPath)));
+            string ResolveLocalPath(string localPath)
+            {
+                return Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, localPath));
+            }
+
+            var settings = SyncSession.ReadSettings(path, ResolveLocalPath);
+
+            if (settings == null)
+            {
+                return;
+            }
 
             using (var session = new SyncSession(settings))
             {
@@ -120,30 +129,9 @@
             }
         }
 
-        private static void SyncSetupRepl()
-        {
-            while (true)
-            {
-                Console.WriteLine("Enter 'q' to exit or 'r' to reload.");
-                string input = Console.ReadLine() ?? string.Empty;
-
-                if (input == "q")
-                {
-                    MainLogger.Instance.LogDebug("Quitting...");
-                    break;
-                }
-
-                if (input == "r")
-                {
-                    MainLogger.Instance.LogDebug("Reloading...");
-                }
-            }
-        }
-
         private static T ReadArguments<T>(string[] args)
-            where T : class
         {
-            T cliArgs = null;
+            T cliArgs = default;
 
             Parser.Default.ParseArguments<T>(args)
                   .WithParsed(x => cliArgs = x);

@@ -4,7 +4,6 @@
     using System.IO;
     using System.Reactive;
     using System.Reactive.Linq;
-    using System.Runtime.CompilerServices;
 
     using Newtonsoft.Json;
 
@@ -15,81 +14,7 @@
         public SyncSession(SyncSettings syncSettings)
         {
             this.SyncSettings = syncSettings;
-            this.SetupInstance();
-        }
 
-        private bool IsRunning { get; set; }
-
-        private IObservable<EventPattern<FileSystemEventArgs>> FsObservable =>
-            Observable.Merge(
-                Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
-                    action => this.FsWatcher.Changed += action, action => this.FsWatcher.Changed -= action),
-                Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
-                    action => this.FsWatcher.Created += action, action => this.FsWatcher.Created -= action),
-                Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
-                    action => this.FsWatcher.Deleted += action, action => this.FsWatcher.Deleted -= action),
-                Observable.FromEventPattern<RenamedEventHandler, FileSystemEventArgs>(
-                    action => this.FsWatcher.Renamed += action, action => this.FsWatcher.Renamed -= action));
-
-        private FileSystemWatcher FsWatcher { get; set; }
-
-        private Session Session { get; set; }
-
-        private SessionOptions SessionOptions { get; set; }
-
-        private SyncSettings SyncSettings { get; }
-
-        private IDisposable Subscription { get; set; }
-
-        public void Dispose()
-        {
-            this.FsWatcher.Dispose();
-            this.Session.Dispose();
-
-            if (this.IsRunning)
-            {
-                this.Stop();
-            }
-        }
-
-        public void Start()
-        {
-            MainLogger.Instance.LogDebug($"Opening a connection to `{this.SyncSettings.HostName}:{this.SyncSettings.RemotePath}` ...");
-            this.Session.Open(this.SessionOptions);
-
-            MainLogger.Instance.LogDebug($"Creating the remote path `{this.SyncSettings.RemotePath}` if necessary...");
-            this.Session.ExecuteCommand($"mkdir -p {this.SyncSettings.RemotePath}");
-
-            MainLogger.Instance.LogDebug("Initiating first sync...");
-            this.SyncFiles();
-            MainLogger.Instance.LogDebug("First sync finished...");
-
-            this.Subscription = this.FsObservable.Subscribe(_ =>
-            {
-                MainLogger.Instance.LogDebug($"Files changed...");
-
-                this.SyncFiles();
-            });
-            this.FsWatcher.EnableRaisingEvents = true;
-
-            MainLogger.Instance.LogDebug($"Sync watching: {this.SyncSettings.LocalPath}");
-
-            this.IsRunning = true;
-        }
-
-        public void Stop()
-        {
-            this.FsWatcher.EnableRaisingEvents = false;
-            this.Subscription.Dispose();
-
-            this.Session.FileTransferred -= this.FileTransferred;
-            this.Session.Close();
-
-            this.IsRunning = false;
-        }
-
-        private void SetupInstance()
-        {
             this.SessionOptions = new SessionOptions
             {
                 Protocol = Protocol.Sftp,
@@ -113,6 +38,80 @@
                 Filter = "*",
                 IncludeSubdirectories = true
             };
+        }
+
+        private bool IsRunning { get; set; }
+
+        private IObservable<EventPattern<FileSystemEventArgs>> FsObservable =>
+            Observable.Merge(
+                Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                    action => this.FsWatcher.Changed += action, action => this.FsWatcher.Changed -= action),
+                Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                    action => this.FsWatcher.Created += action, action => this.FsWatcher.Created -= action),
+                Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                    action => this.FsWatcher.Deleted += action, action => this.FsWatcher.Deleted -= action),
+                Observable.FromEventPattern<RenamedEventHandler, FileSystemEventArgs>(
+                    action => this.FsWatcher.Renamed += action, action => this.FsWatcher.Renamed -= action));
+
+        private FileSystemWatcher FsWatcher { get; }
+
+        private Session Session { get; }
+
+        private SessionOptions SessionOptions { get; }
+
+        public SyncSettings SyncSettings { get; }
+
+        private IDisposable Subscription { get; set; }
+
+        public void Dispose()
+        {
+            this.FsWatcher.Dispose();
+
+            if (this.IsRunning)
+            {
+                this.Stop();
+            }
+
+            this.Session.Dispose();
+        }
+
+        public void Start()
+        {
+            MainLogger.Instance.LogDebug($"Opening a connection to `{this.SyncSettings.HostName}:{this.SyncSettings.RemotePath}` ...");
+            this.Session.Open(this.SessionOptions);
+
+            MainLogger.Instance.LogDebug($"Creating the remote path `{this.SyncSettings.RemotePath}` if necessary...");
+            this.Session.ExecuteCommand($"mkdir -p {this.SyncSettings.RemotePath}");
+
+            MainLogger.Instance.LogDebug($"Initiating first sync to {this.SyncSettings.RemotePath}");
+            this.SyncFiles();
+            MainLogger.Instance.LogDebug($"First sync finished to {this.SyncSettings.RemotePath}");
+
+            this.Subscription = this.FsObservable
+                                    .Throttle(TimeSpan.FromSeconds(1))
+                                    .Subscribe(_ =>
+                                    {
+                                        MainLogger.Instance.LogDebug($"Starting sync to {this.SyncSettings.RemotePath}");
+                                        this.SyncFiles();
+                                        MainLogger.Instance.LogDebug($"Sync completed to {this.SyncSettings.RemotePath}");
+                                    });
+
+            this.FsWatcher.EnableRaisingEvents = true;
+
+            MainLogger.Instance.LogDebug($"Sync watching: {this.SyncSettings.LocalPath}");
+
+            this.IsRunning = true;
+        }
+
+        public void Stop()
+        {
+            this.FsWatcher.EnableRaisingEvents = false;
+            this.Subscription.Dispose();
+
+            this.Session.FileTransferred -= this.FileTransferred;
+            this.Session.Close();
+
+            this.IsRunning = false;
         }
 
         private void FileTransferred(object sender, TransferEventArgs e)
@@ -197,7 +196,7 @@
 
             foreach (SessionRemoteException failure in result.Failures)
             {
-                MainLogger.Instance.LogError(failure);
+                MainLogger.Instance.LogError(failure).GetAwaiter().GetResult();
             }
         }
 

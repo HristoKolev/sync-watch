@@ -10,6 +10,8 @@
 
         private const string AppConfigFileName = "app-settings.json";
 
+        public const string SyncSettingsFileName = "sync-settings.json";
+        
         public static AppConfig AppConfig { get; set; }
 
         public static string AppConfigLocation => Path.Combine(AssemblyDirectory, AppConfigFileName);
