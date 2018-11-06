@@ -11,6 +11,8 @@
 
     public class SyncSession : IDisposable
     {
+        public bool LogLocation { get; set; } = true;
+
         public SyncSession(SyncSettings syncSettings)
         {
             this.SyncSettings = syncSettings;
@@ -173,7 +175,14 @@
 
         private void LogTransfer(string message)
         {
-            MainLogger.Instance.LogDebug($"{this.SyncSettings.HostName}:{this.SyncSettings.RemotePath} | {message}");
+            if (this.LogLocation)
+            {
+                MainLogger.Instance.LogDebug($"{this.SyncSettings.HostName}:{this.SyncSettings.RemotePath} | {message}");
+            }
+            else
+            {
+                MainLogger.Instance.LogDebug(message);
+            }
         }
 
         private void SyncFiles()

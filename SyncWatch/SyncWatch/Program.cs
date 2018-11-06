@@ -122,6 +122,8 @@
 
             using (var session = new SyncSession(settings))
             {
+                session.LogLocation = false;
+
                 session.Start();
 
                 // Just sleep. The session will never close.
